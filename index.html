@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verdskart – Banner i flammer</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Tailwind CSS (for UI styling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- FontAwesome (for Icons) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a202c; /* Dark background */
+        }
+        
+        #map {
+            height: 100vh;
+            width: 100vw;
+            z-index: 1;
+            background: #0f172a;
+        }
+
+        /* Custom UI Overlay adjustments */
+        .leaflet-popup-content-wrapper {
+            background-color: #1e293b; /* Slate 800 */
+            color: #e2e8f0;
+            border-radius: 0.5rem;
+            border: 1px solid #475569;
+        }
+        .leaflet-popup-tip {
+            background-color: #1e293b;
+        }
+        .leaflet-container a.leaflet-popup-close-button {
+            color: #94a3b8;
+        }
+        
+        /* Sidebar Transitions */
+        .sidebar {
+            transition: transform 0.3s ease-in-out;
+        }
+        .sidebar-closed {
+            transform: translateX(-100%);
+        }
+
+        /* Marker Icon Styles */
+        .custom-marker {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+            transition: transform 0.1s;
+        }
+        .custom-marker:hover {
+            transform: scale(1.2);
+            z-index: 1000 !important;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar UI -->
+    <div id="sidebar" class="sidebar absolute top-0 left-0 h-full w-80 bg-slate-900 border-r border-slate-700 shadow-2xl z-[1000] flex flex-col transition-transform duration-300">
+        <!-- Header -->
+        <div class="p-4 border-b border-slate-700 bg-slate-800 flex justify-between items-center">
+            <h1 class="text-xl font-bold text-amber-500 font-serif"><i class="fa-solid fa-map-location-dot mr-2"></i>Verdskart</h1>
+            <button onclick="toggleSidebar()" class="text-slate-400 hover:text-white md:hidden">
+                <i class="fa-solid fa-times"></i>
+            </button>
+        </div>
+
+        <!-- Filters -->
+        <div class="p-4 border-b border-slate-700">
+            <h2 class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">Kartlag</h2>
+            <div class="space-y-2" id="filter-container">
+                <!-- Filters injected via JS -->
+            </div>
+        </div>
+
+        <!-- Location List -->
+        <div class="flex-1 overflow-y-auto p-4">
+            <h2 class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">Oversikt</h2>
+            <input type="text" id="search" placeholder="Search locations..." class="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded px-3 py-2 text-sm mb-4 focus:outline-none focus:border-amber-500 transition">
+            <ul id="location-list" class="space-y-2">
+                <!-- List items injected via JS -->
+            </ul>
+        </div>
+
+        <!-- Footer -->
+        <div class="p-4 border-t border-slate-700 text-xs text-slate-500 text-center">
+            Session Log v1.2 &bull; <a href="#" class="hover:text-amber-500">Til Notion</a>
+        </div>
+    </div>
+
+    <!-- Toggle Button (Visible when sidebar is closed or on mobile) -->
+    <button onclick="toggleSidebar()" class="absolute top-4 left-4 z-[500] bg-slate-800 text-amber-500 p-3 rounded-md shadow-lg border border-slate-700 hover:bg-slate-700 transition">
+        <i class="fa-solid fa-bars"></i>
+    </button>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // ==========================================
+        // 1. CONFIGURATION & DATA
+        // ==========================================
+        
+        // This simulates your JSON file. In the future, you can fetch('data.json')
+        const mapConfig = {
+            imagePath: 'map.jpg', // The file name of your map in the folder
+            width: 2048,          // Width of your map image in pixels
+            height: 1536,         // Height of your map image in pixels
+            minZoom: -1,
+            maxZoom: 2,
+            initZoom: 0
+        };
+
+        const categories = {
+            'large_city': { label: 'Metropolis', color: '#ef4444', icon: 'fa-chess-rook' }, // Red
+            'small_city': { label: 'Town/City', color: '#f97316', icon: 'fa-city' },       // Orange
+            'village':    { label: 'Village',    color: '#10b981', icon: 'fa-home' },       // Emerald
+            'landmark':   { label: 'Landmark',   color: '#3b82f6', icon: 'fa-mountain' },   // Blue
+            'happening':  { label: 'Session Log',color: '#a855f7', icon: 'fa-book-skull' }  // Purple
+        };
+
+        const locations = [
+            {
+                id: 1,
+                name: "Kings Landing",
+                type: "large_city",
+                coords: [1000, 1024], // [y, x] - Center of image approx
+                desc: "The capital city, bustling with trade and treachery.",
+                link: "https://example.com/wiki/kings-landing"
+            },
+            {
+                id: 2,
+                name: "The Whispering Woods",
+                type: "landmark",
+                coords: [1200, 800],
+                desc: "Ancient forest where the elves reside. <b>Danger level: High.</b>",
+                link: "#"
+            },
+            {
+                id: 3,
+                name: "Rivertown",
+                type: "small_city",
+                coords: [600, 1200],
+                desc: "A major trade hub located at the fork of the Serpentine River.",
+                link: "#"
+            },
+            {
+                id: 4,
+                name: "Session 4: The Ambush",
+                type: "happening",
+                coords: [650, 1250], // Near Rivertown
+                desc: "The party was ambushed by goblins here. Dropped: <i>Ring of Fire</i>.",
+                link: "#"
+            },
+            {
+                id: 5,
+                name: "Oakhaven",
+                type: "village",
+                coords: [400, 400],
+                desc: "A quiet farming community untouched by the war.",
+                link: "#"
+            }
+        ];
+
+        // ==========================================
+        // 2. MAP INITIALIZATION
+        // ==========================================
+
+        // We use CRS.Simple for game maps (x, y coordinates instead of Lat/Lng)
+        const map = L.map('map', {
+            crs: L.CRS.Simple,
+            minZoom: mapConfig.minZoom,
+            maxZoom: mapConfig.maxZoom,
+            zoomControl: false // We add it manually to position it better if needed
+        });
+
+        // Add standard zoom control to top-right
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        // --- OPTION A: Single Image (Easiest for getting started) ---
+        // Calculate the bounds of the image in map coordinates
+        const bounds = [[0, 0], [mapConfig.height, mapConfig.width]];
+        
+        // Add the image overlay
+        // Note: For a "Google Maps" style with tiling, you would use L.tileLayer
+        // and a tool like GDAL2Tiles to generate folders of images.
+        // Example: L.tileLayer('tiles/{z}/{x}/{y}.png', { ... }).addTo(map);
+        const image = L.imageOverlay(mapConfig.imagePath, bounds).addTo(map);
+
+        // Center map
+        map.fitBounds(bounds);
+        map.setView([mapConfig.height/2, mapConfig.width/2], mapConfig.initZoom);
+
+        // ==========================================
+        // 3. MARKER LOGIC
+        // ==========================================
+        
+        const layerGroups = {};
+        const allMarkers = [];
+
+        // Initialize layer groups for filtering
+        Object.keys(categories).forEach(key => {
+            layerGroups[key] = L.layerGroup().addTo(map);
+        });
+
+        function createCustomIcon(type) {
+            const cat = categories[type];
+            return L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div class="custom-marker" style="background-color: ${cat.color}; width: 32px; height: 32px; color: white; font-size: 14px;">
+                        <i class="fa-solid ${cat.icon}"></i>
+                       </div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 32], // Center bottom anchor
+                popupAnchor: [0, -34]
+            });
+        }
+
+        // Add Markers to Map
+        locations.forEach(loc => {
+            if (!categories[loc.type]) return; // Safety check
+
+            const marker = L.marker(loc.coords, {
+                icon: createCustomIcon(loc.type),
+                title: loc.name
+            });
+
+            // Popup Content
+            const popupContent = `
+                <div class="font-sans">
+                    <h3 class="font-bold text-lg text-amber-500 mb-1">${loc.name}</h3>
+                    <div class="text-xs font-semibold uppercase text-slate-400 mb-2">${categories[loc.type].label}</div>
+                    <p class="text-sm mb-3 text-slate-200">${loc.desc}</p>
+                    ${loc.link && loc.link !== '#' ? `<a href="${loc.link}" target="_blank" class="inline-block bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-1 rounded transition">View Wiki Entry</a>` : ''}
+                </div>
+            `;
+
+            marker.bindPopup(popupContent);
+            
+            // Add to specific layer group based on type
+            layerGroups[loc.type].addLayer(marker);
+            
+            // Store for sidebar interaction
+            allMarkers.push({ ...loc, markerInstance: marker });
+        });
+
+        // ==========================================
+        // 4. UI & INTERACTION LOGIC
+        // ==========================================
+
+        // Render Sidebar Filters
+        const filterContainer = document.getElementById('filter-container');
+        Object.keys(categories).forEach(key => {
+            const cat = categories[key];
+            const div = document.createElement('div');
+            div.className = 'flex items-center space-x-2 cursor-pointer hover:bg-slate-800 p-1 rounded';
+            div.innerHTML = `
+                <input type="checkbox" id="filter-${key}" checked class="form-checkbox h-4 w-4 text-amber-500 rounded border-slate-600 bg-slate-700 focus:ring-amber-500 focus:ring-offset-slate-900">
+                <label for="filter-${key}" class="flex-1 text-sm text-slate-300 cursor-pointer select-none flex items-center">
+                    <span class="w-2 h-2 rounded-full mr-2" style="background-color: ${cat.color}"></span>
+                    ${cat.label}
+                </label>
+            `;
+            
+            // Toggle Logic
+            div.querySelector('input').addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    map.addLayer(layerGroups[key]);
+                } else {
+                    map.removeLayer(layerGroups[key]);
+                }
+                renderLocationList(); // Update list to match map
+            });
+            
+            filterContainer.appendChild(div);
+        });
+
+        // Render Location List (Sidebar)
+        function renderLocationList(searchTerm = '') {
+            const listContainer = document.getElementById('location-list');
+            listContainer.innerHTML = '';
+
+            const activeCategories = Object.keys(categories).filter(key => {
+                const checkbox = document.getElementById(`filter-${key}`);
+                return checkbox && checkbox.checked;
+            });
+
+            const filteredLocations = allMarkers.filter(loc => {
+                const matchesSearch = loc.name.toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesType = activeCategories.includes(loc.type);
+                return matchesSearch && matchesType;
+            });
+
+            if (filteredLocations.length === 0) {
+                listContainer.innerHTML = '<li class="text-slate-500 text-sm italic p-2">No locations found.</li>';
+                return;
+            }
+
+            filteredLocations.forEach(loc => {
+                const li = document.createElement('li');
+                li.className = 'p-2 rounded bg-slate-800 border border-slate-700 hover:border-amber-500 hover:bg-slate-750 cursor-pointer transition flex items-center justify-between group';
+                li.innerHTML = `
+                    <span class="text-sm text-slate-300 font-medium group-hover:text-white">${loc.name}</span>
+                    <i class="fa-solid fa-crosshairs text-slate-600 group-hover:text-amber-500 text-xs"></i>
+                `;
+                
+                li.onclick = () => {
+                    // Fly to location on map
+                    map.flyTo(loc.coords, 2);
+                    loc.markerInstance.openPopup();
+                    
+                    // On mobile, close sidebar after selection
+                    if (window.innerWidth < 768) toggleSidebar();
+                };
+                listContainer.appendChild(li);
+            });
+        }
+
+        // Search Input Logic
+        document.getElementById('search').addEventListener('input', (e) => {
+            renderLocationList(e.target.value);
+        });
+
+        // Initial Render
+        renderLocationList();
+
+        // Sidebar Toggle
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('-translate-x-full');
+        }
+
+        // Map Click Debugger (Helpful for finding coordinates!)
+        map.on('click', function(e) {
+            console.log("Map Clicked at: [" + e.latlng.lat.toFixed(0) + ", " + e.latlng.lng.toFixed(0) + "]");
+        });
+
+    </script>
+</body>
+</html>
