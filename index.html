@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verdskart – Banner i flammer</title>
+    <title>Kart – Faner i flammer</title>
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
@@ -51,7 +51,7 @@
             transform: translateX(-100%);
         }
 
-        /* Marker Icon Styles */
+        /* Marker Icon Styles for FontAwesome/DivIcons */
         .custom-marker {
             display: flex;
             justify-content: center;
@@ -65,6 +65,13 @@
             transform: scale(1.2);
             z-index: 1000 !important;
         }
+        /* Custom image markers are handled by Leaflet's L.icon */
+        .leaflet-marker-icon img {
+            border-radius: 50%; /* Apply rounded corners to image icons */
+            border: 2px solid white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+            transition: transform 0.1s;
+        }
     </style>
 </head>
 <body>
@@ -73,10 +80,18 @@
     <div id="sidebar" class="sidebar absolute top-0 left-0 h-full w-80 bg-slate-900 border-r border-slate-700 shadow-2xl z-[1000] flex flex-col transition-transform duration-300">
         <!-- Header -->
         <div class="p-4 border-b border-slate-700 bg-slate-800 flex justify-between items-center">
-            <h1 class="text-xl font-bold text-amber-500 font-serif"><i class="fa-solid fa-map-location-dot mr-2"></i>Verdskart</h1>
+            <h1 class="text-xl font-bold text-amber-500 font-serif"><i class="fa-solid fa-map-location-dot mr-2"></i>Faner i flammer</h1>
             <button onclick="toggleSidebar()" class="text-slate-400 hover:text-white md:hidden">
                 <i class="fa-solid fa-times"></i>
             </button>
+        </div>
+
+        <!-- Map Selector (NEW) -->
+        <div class="p-4 border-b border-slate-700 bg-slate-800">
+            <label for="map-selector" class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2 block">Velg Kart</label>
+            <select id="map-selector" onchange="handleMapSwitch(this.value)" class="w-full bg-slate-700 border border-slate-600 text-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500 transition">
+                <!-- Options injected by JS -->
+            </select>
         </div>
 
         <!-- Filters -->
@@ -87,10 +102,24 @@
             </div>
         </div>
 
+        <!-- Debug/GM Tools -->
+        <div class="p-4 border-b border-slate-700">
+            <h2 class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">GM Verktøy</h2>
+            <div class="space-y-2">
+                <div class="flex items-center space-x-2">
+                    <input type="checkbox" id="debug-mode-toggle" class="form-checkbox h-4 w-4 text-amber-500 rounded border-slate-600 bg-slate-700 focus:ring-amber-500 focus:ring-offset-slate-900">
+                    <label for="debug-mode-toggle" class="text-sm text-slate-300 select-none">Vis koordinater (Y, X)</label>
+                </div>
+                <div id="coord-display" class="hidden bg-slate-800 p-2 rounded text-slate-400 text-sm font-mono whitespace-nowrap">
+                    Klikk på kartet...
+                </div>
+            </div>
+        </div>
+
         <!-- Location List -->
         <div class="flex-1 overflow-y-auto p-4">
             <h2 class="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">Oversikt</h2>
-            <input type="text" id="search" placeholder="Search locations..." class="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded px-3 py-2 text-sm mb-4 focus:outline-none focus:border-amber-500 transition">
+            <input type="text" id="search" placeholder="Søk steder..." class="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded px-3 py-2 text-sm mb-4 focus:outline-none focus:border-amber-500 transition">
             <ul id="location-list" class="space-y-2">
                 <!-- List items injected via JS -->
             </ul>
@@ -98,7 +127,7 @@
 
         <!-- Footer -->
         <div class="p-4 border-t border-slate-700 text-xs text-slate-500 text-center">
-            Session Log v1.2 &bull; <a href="#" class="hover:text-amber-500">Til Notion</a>
+            Kartmakar 0.8 &bull; <a href="#" class="hover:text-amber-500">Til Notion</a>
         </div>
     </div>
 
@@ -115,190 +144,480 @@
 
     <script>
         // ==========================================
-        // 1. CONFIGURATION & DATA
+        // 0. EMBEDDED MAP DATA (To allow local execution)
+        // ==========================================
+        const EMBEDDED_MAP_DATA = {
+            "categories": {
+                "large_city": { 
+                    "label": "Hovudstad", 
+                    "color": "#ef4444", 
+                    "icon": "fa-landmark-flag" 
+                },
+                "small_city": { 
+                    "label": "By", 
+                    "color": "#f97316", 
+                    "icon": "fa-hotel" 
+                },
+                "village": { 
+                    "label": "Landsby", 
+                    "color": "#facc15", 
+                    "icon": "fa-home" 
+                },
+                "landmark": { 
+                    "label": "Sjåverdigheit", 
+                    "color": "#3b82f6", 
+                    "icon": "fa-mountain" 
+                },
+                "session": { 
+                    "label": "Sesjon", 
+                    "color": "#a855f7", 
+                    "icon": "fa-book-bookmark" 
+                }
+            },
+            "maps": [
+                {
+                    "id": "realm_1",
+                    "name": "Verdskart: Faner i flammer",
+                    "imagePath": "map.jpg",
+                    "width": 2048,
+                    "height": 1536,
+                    "minZoom": -1,
+                    "maxZoom": 2,
+                    "initZoom": 0,
+                    "locations": [
+                        {
+                            "id": 1,
+                            "name": "Kopartopp",
+                            "type": "village",
+                            "coords": [1039, 824],
+                            "desc": "Turiststad dit fiffen reiser",
+                            "link": "#"
+                        },
+                        {
+                            "id": 2,
+                            "name": "Sesjon 1: Kopartopp",
+                            "type": "session",
+                            "coords": [1039, 824],
+                            "desc": "Eventyret startar, oppdagar mysteriet om Kløver af Tårnet.",
+                            "link": "#"
+                        }
+                    ],
+                    "regions": [
+                        {
+                            "id": 101,
+                            "name": "Armada",
+                            "type": "territory",
+                            "coords": [
+                                [18, 2018],
+                                [726, 2006],
+                                [742, 1486],
+                                [786, 1184],
+                                [2, 1430]
+                            ],
+                            "color": "rgb(150, 150, 150)",
+                            "fillOpacity": 0.15,
+                            "desc": "Et frossent, ugjestmildt territorium styrt av isgiganter."
+                        },
+                        {
+                            "id": 102,
+                            "name": "Jestmark",
+                            "type": "territory",
+                            "coords": [
+                                [26, 1412],
+                                [924, 1144],
+                                [1040, 1032],
+                                [1092, 780],
+                                [978, 798],
+                                [916, 896],
+                                [882, 942],
+                                [846, 866],
+                                [798, 944],
+                                [750, 810],
+                                [708, 890],
+                                [602,660],
+                                [535, 676],
+                                [358,606],
+                                [20,1328]
+                            ],
+                            "color": "#10b981",
+                            "fillOpacity": 0.15,
+                            "desc": "Det fredelige, grønne Elveriket."
+                        },
+                        {
+                            "id": 102,
+                            "name": "Høglov",
+                            "type": "territory",
+                            "coords": [
+                                [746, 1500],
+                                [850, 2026],
+                                [1116, 2030],
+                                [1192, 1612],
+                                [1308, 1970],
+                                [1410, 1964],
+                                [1522, 1132],
+                                [1448, 984],
+                                [1340, 1290],
+                                [1216, 1350],
+                                [1132, 1356],
+                                [1108, 1082],
+                                [1042, 1036],
+                                [918, 1154],
+                                [796, 1188]
+                            ],
+                            "color": "#10b981",
+                            "fillOpacity": 0.15,
+                            "desc": "Det fredelige, grønne Elveriket."
+                        }
+                    ]
+                }
+            ]
+        };
+        // ==========================================
+        // 1. GLOBAL STATE
+        // ==========================================
+        let map = null; // Current Leaflet map instance
+        let mapData = null; // All data loaded from the embedded config
+        let activeMapConfig = null; // Configuration for the currently displayed map
+        
+        let categories = {}; // Global categories
+        let layerGroups = {}; // Marker layers for the active map
+        let allMarkers = []; // All markers for the active map
+        let regionLayerGroup; // Dedicated group for polygons
+
+        // ==========================================
+        // 2. INITIALIZATION AND MAP SWITCHING
         // ==========================================
         
-        // This simulates your JSON file. In the future, you can fetch('data.json')
-        const mapConfig = {
-            imagePath: 'map.jpg', // The file name of your map in the folder
-            width: 2048,          // Width of your map image in pixels
-            height: 1536,         // Height of your map image in pixels
-            minZoom: -1,
-            maxZoom: 2,
-            initZoom: 0
-        };
+        function loadMapData() {
+            // Load data from the embedded object directly
+            mapData = EMBEDDED_MAP_DATA;
+            categories = mapData.categories;
 
-        const categories = {
-            'large_city': { label: 'Metropolis', color: '#ef4444', icon: 'fa-chess-rook' }, // Red
-            'small_city': { label: 'Town/City', color: '#f97316', icon: 'fa-city' },       // Orange
-            'village':    { label: 'Village',    color: '#10b981', icon: 'fa-home' },       // Emerald
-            'landmark':   { label: 'Landmark',   color: '#3b82f6', icon: 'fa-mountain' },   // Blue
-            'happening':  { label: 'Session Log',color: '#a855f7', icon: 'fa-book-skull' }  // Purple
-        };
-
-        const locations = [
-            {
-                id: 1,
-                name: "Kings Landing",
-                type: "large_city",
-                coords: [1000, 1024], // [y, x] - Center of image approx
-                desc: "The capital city, bustling with trade and treachery.",
-                link: "https://example.com/wiki/kings-landing"
-            },
-            {
-                id: 2,
-                name: "The Whispering Woods",
-                type: "landmark",
-                coords: [1200, 800],
-                desc: "Ancient forest where the elves reside. <b>Danger level: High.</b>",
-                link: "#"
-            },
-            {
-                id: 3,
-                name: "Rivertown",
-                type: "small_city",
-                coords: [600, 1200],
-                desc: "A major trade hub located at the fork of the Serpentine River.",
-                link: "#"
-            },
-            {
-                id: 4,
-                name: "Session 4: The Ambush",
-                type: "happening",
-                coords: [650, 1250], // Near Rivertown
-                desc: "The party was ambushed by goblins here. Dropped: <i>Ring of Fire</i>.",
-                link: "#"
-            },
-            {
-                id: 5,
-                name: "Oakhaven",
-                type: "village",
-                coords: [400, 400],
-                desc: "A quiet farming community untouched by the war.",
-                link: "#"
+            // Populate map selector and load the first map
+            if (mapData.maps.length === 0) {
+                 console.error("Ingen kartdefinisjoner funnet.");
+                 return;
             }
-        ];
-
-        // ==========================================
-        // 2. MAP INITIALIZATION
-        // ==========================================
-
-        // We use CRS.Simple for game maps (x, y coordinates instead of Lat/Lng)
-        const map = L.map('map', {
-            crs: L.CRS.Simple,
-            minZoom: mapConfig.minZoom,
-            maxZoom: mapConfig.maxZoom,
-            zoomControl: false // We add it manually to position it better if needed
-        });
-
-        // Add standard zoom control to top-right
-        L.control.zoom({ position: 'topright' }).addTo(map);
-
-        // --- OPTION A: Single Image (Easiest for getting started) ---
-        // Calculate the bounds of the image in map coordinates
-        const bounds = [[0, 0], [mapConfig.height, mapConfig.width]];
-        
-        // Add the image overlay
-        // Note: For a "Google Maps" style with tiling, you would use L.tileLayer
-        // and a tool like GDAL2Tiles to generate folders of images.
-        // Example: L.tileLayer('tiles/{z}/{x}/{y}.png', { ... }).addTo(map);
-        const image = L.imageOverlay(mapConfig.imagePath, bounds).addTo(map);
-
-        // Center map
-        map.fitBounds(bounds);
-        map.setView([mapConfig.height/2, mapConfig.width/2], mapConfig.initZoom);
-
-        // ==========================================
-        // 3. MARKER LOGIC
-        // ==========================================
-        
-        const layerGroups = {};
-        const allMarkers = [];
-
-        // Initialize layer groups for filtering
-        Object.keys(categories).forEach(key => {
-            layerGroups[key] = L.layerGroup().addTo(map);
-        });
-
-        function createCustomIcon(type) {
-            const cat = categories[type];
-            return L.divIcon({
-                className: 'custom-div-icon',
-                html: `<div class="custom-marker" style="background-color: ${cat.color}; width: 32px; height: 32px; color: white; font-size: 14px;">
-                        <i class="fa-solid ${cat.icon}"></i>
-                       </div>`,
-                iconSize: [32, 32],
-                iconAnchor: [16, 32], // Center bottom anchor
-                popupAnchor: [0, -34]
-            });
+            
+            populateMapSelector(mapData.maps);
+            const firstMapId = mapData.maps[0].id;
+            switchMap(firstMapId);
+            
+            // Setup UI interactions (debug, search)
+            setupUILogic();
         }
 
-        // Add Markers to Map
-        locations.forEach(loc => {
-            if (!categories[loc.type]) return; // Safety check
+        function populateMapSelector(maps) {
+            const selector = document.getElementById('map-selector');
+            selector.innerHTML = '';
+            maps.forEach(map => {
+                const option = document.createElement('option');
+                option.value = map.id;
+                option.textContent = map.name;
+                selector.appendChild(option);
+            });
+        }
+        
+        // Handles the change event from the selector
+        function handleMapSwitch(mapId) {
+            switchMap(mapId);
+        }
 
-            const marker = L.marker(loc.coords, {
-                icon: createCustomIcon(loc.type),
-                title: loc.name
+        // Core function to destroy old map and load new one
+        function switchMap(mapId) {
+            // 1. Destroy existing map instance if it exists
+            if (map) {
+                map.remove();
+                map = null;
+            }
+            
+            // 2. Get the new map's configuration
+            activeMapConfig = mapData.maps.find(m => m.id === mapId);
+            if (!activeMapConfig) {
+                console.error(`Map with ID ${mapId} not found.`);
+                return;
+            }
+
+            // 3. Initialize new Leaflet map
+            map = L.map('map', {
+                crs: L.CRS.Simple,
+                minZoom: activeMapConfig.minZoom,
+                maxZoom: activeMapConfig.maxZoom,
+                zoomControl: false
             });
 
-            // Popup Content
-            const popupContent = `
-                <div class="font-sans">
-                    <h3 class="font-bold text-lg text-amber-500 mb-1">${loc.name}</h3>
-                    <div class="text-xs font-semibold uppercase text-slate-400 mb-2">${categories[loc.type].label}</div>
-                    <p class="text-sm mb-3 text-slate-200">${loc.desc}</p>
-                    ${loc.link && loc.link !== '#' ? `<a href="${loc.link}" target="_blank" class="inline-block bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-1 rounded transition">View Wiki Entry</a>` : ''}
-                </div>
-            `;
+            L.control.zoom({ position: 'topright' }).addTo(map);
 
-            marker.bindPopup(popupContent);
+            // 4. Set map image and view
+            // NOTE: map.jpg and kings_landing_city.jpg must be in the same directory as index.html
+            const bounds = [[0, 0], [activeMapConfig.height, activeMapConfig.width]];
+            L.imageOverlay(activeMapConfig.imagePath, bounds).addTo(map);
+
+            map.fitBounds(bounds);
+            map.setView([activeMapConfig.height/2, activeMapConfig.width/2], activeMapConfig.initZoom);
             
-            // Add to specific layer group based on type
-            layerGroups[loc.type].addLayer(marker);
+            // 5. Clear and Setup new layers
+            layerGroups = {};
+            allMarkers = [];
             
-            // Store for sidebar interaction
-            allMarkers.push({ ...loc, markerInstance: marker });
-        });
+            Object.keys(categories).forEach(key => {
+                layerGroups[key] = L.layerGroup();
+                // ONLY add layer to map if it's NOT the 'session' layer (to make it unchecked by default)
+                if (key !== 'session') {
+                    layerGroups[key].addTo(map);
+                }
+            });
+            // REGION CHANGE: Initialize layer group without adding it to the map initially
+            regionLayerGroup = L.layerGroup(); 
+
+            // 6. Draw Features for the new map
+            drawRegions(activeMapConfig.regions);
+            drawMarkers(activeMapConfig.locations);
+            drawSessionPath(activeMapConfig.locations); // ADD: Draw the dotted path
+
+            // 7. Update UI based on new content
+            renderSidebarFilters();
+            renderLocationList();
+            
+            // Re-attach map click listener for coordinates
+            attachCoordinateDebugger();
+        }
+
+        // ==========================================
+        // 3. FEATURE DRAWING FUNCTIONS
+        // ==========================================
+        
+        function createCustomIcon(type) {
+            const cat = categories[type];
+            
+            if (cat.imagePath) {
+                // Use L.icon for external image URLs
+                return L.icon({
+                    iconUrl: cat.imagePath,
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 32],
+                    popupAnchor: [0, -34]
+                });
+            } else {
+                // Use L.divIcon for FontAwesome
+                return L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div class="custom-marker" style="background-color: ${cat.color}; width: 32px; height: 32px; color: white; font-size: 14px;">
+                            <i class="fa-solid ${cat.icon}"></i>
+                           </div>`,
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 32],
+                    popupAnchor: [0, -34]
+                });
+            }
+        }
+
+        function drawMarkers(locations) {
+            locations.forEach(loc => {
+                // Skip if category is not defined (should not happen with embedded data)
+                if (!categories[loc.type]) return; 
+
+                const marker = L.marker(loc.coords, {
+                    icon: createCustomIcon(loc.type),
+                    title: loc.name
+                });
+
+                // Popup Content
+                const popupContent = `
+                    <div class="font-sans">
+                        <h3 class="font-bold text-lg text-amber-500 mb-1">${loc.name}</h3>
+                        <div class="text-xs font-semibold uppercase text-slate-400 mb-2">${categories[loc.type].label}</div>
+                        <p class="text-sm mb-3 text-slate-200">${loc.desc}</p>
+                        ${loc.link && loc.link !== '#' ? `<a href="${loc.link}" target="_blank" class="inline-block bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-1 rounded transition">Til Wiki</a>` : ''}
+                    </div>
+                `;
+
+                marker.bindPopup(popupContent);
+                layerGroups[loc.type].addLayer(marker);
+                
+                // Store for sidebar interaction
+                allMarkers.push({ ...loc, markerInstance: marker });
+            });
+        }
+        
+        function drawRegions(regions) {
+            if (!regions) return;
+            regions.forEach(region => {
+                const polygon = L.polygon(region.coords, {
+                    color: region.color || '#3b82f6', // Default blue border
+                    fillColor: region.color || '#3b82f6',
+                    fillOpacity: region.fillOpacity || 0.1,
+                    weight: 2,
+                    interactive: true
+                });
+                
+                const popupContent = `
+                    <div class="font-sans">
+                        <h3 class="font-bold text-lg text-slate-200 mb-1">${region.name}</h3>
+                        <div class="text-xs font-semibold uppercase text-slate-400 mb-2">Region</div>
+                        <p class="text-sm mb-3 text-slate-200">${region.desc}</p>
+                    </div>
+                `;
+                
+                polygon.bindPopup(popupContent);
+
+                // Add hover effects (highlight)
+                polygon.on('mouseover', function (e) {
+                    this.setStyle({
+                        weight: 4,
+                        fillOpacity: (region.fillOpacity || 0.1) + 0.15
+                    });
+                });
+                polygon.on('mouseout', function (e) {
+                    this.setStyle({
+                        weight: 2,
+                        fillOpacity: region.fillOpacity || 0.1
+                    });
+                });
+                
+                regionLayerGroup.addLayer(polygon);
+            });
+        }
+        
+        /**
+         * Draws a dotted polyline connecting all session markers in order.
+         * The polyline is added to the 'session' layer group.
+         */
+        function drawSessionPath(locations) {
+            const sessionColor = categories['session'] ? categories['session'].color : '#a855f7';
+
+            // 1. Filter and extract coordinates of 'session' locations in array order
+            const sessionCoords = locations
+                .filter(loc => loc.type === 'session')
+                .map(loc => loc.coords);
+
+            if (sessionCoords.length > 1) {
+                // 2. Create the polyline
+                const polyline = L.polyline(sessionCoords, {
+                    color: sessionColor,
+                    weight: 3,
+                    opacity: 0.8,
+                    dashArray: '8, 8', // Dotted line style
+                    interactive: false 
+                });
+
+                // 3. Add to the session layer group so it toggles with the markers
+                if (layerGroups['session']) {
+                    layerGroups['session'].addLayer(polyline);
+                }
+            }
+        }
 
         // ==========================================
         // 4. UI & INTERACTION LOGIC
         // ==========================================
 
-        // Render Sidebar Filters
-        const filterContainer = document.getElementById('filter-container');
-        Object.keys(categories).forEach(key => {
-            const cat = categories[key];
-            const div = document.createElement('div');
-            div.className = 'flex items-center space-x-2 cursor-pointer hover:bg-slate-800 p-1 rounded';
-            div.innerHTML = `
-                <input type="checkbox" id="filter-${key}" checked class="form-checkbox h-4 w-4 text-amber-500 rounded border-slate-600 bg-slate-700 focus:ring-amber-500 focus:ring-offset-slate-900">
-                <label for="filter-${key}" class="flex-1 text-sm text-slate-300 cursor-pointer select-none flex items-center">
-                    <span class="w-2 h-2 rounded-full mr-2" style="background-color: ${cat.color}"></span>
-                    ${cat.label}
-                </label>
-            `;
+        function attachCoordinateDebugger() {
+            const debugToggle = document.getElementById('debug-mode-toggle');
+            const coordDisplay = document.getElementById('coord-display');
             
-            // Toggle Logic
-            div.querySelector('input').addEventListener('change', (e) => {
+            // Remove previous listener to prevent duplicates
+            if (map && map.off) map.off('click');
+
+            // Attach new click listener
+            if (map) {
+                map.on('click', function(e) {
+                    if (!debugToggle.checked) return;
+                    // LatLng in Leaflet's Simple CRS corresponds to Y, X
+                    const y = e.latlng.lat.toFixed(0);
+                    const x = e.latlng.lng.toFixed(0);
+                    coordDisplay.innerHTML = `Y: ${y}, X: ${x}`;
+                });
+            }
+        }
+
+        function setupUILogic() {
+            const debugToggle = document.getElementById('debug-mode-toggle');
+            const coordDisplay = document.getElementById('coord-display');
+            
+            // Coordinate Toggle UI Logic
+            debugToggle.addEventListener('change', (e) => {
                 if (e.target.checked) {
-                    map.addLayer(layerGroups[key]);
+                    coordDisplay.classList.remove('hidden');
                 } else {
-                    map.removeLayer(layerGroups[key]);
+                    coordDisplay.classList.add('hidden');
+                    coordDisplay.textContent = 'Klikk på kartet...';
                 }
-                renderLocationList(); // Update list to match map
             });
             
-            filterContainer.appendChild(div);
-        });
+            // Search Input Logic
+            document.getElementById('search').addEventListener('input', (e) => {
+                renderLocationList(e.target.value);
+            });
+        }
+
+
+        function renderSidebarFilters() {
+            const filterContainer = document.getElementById('filter-container');
+            filterContainer.innerHTML = ''; // Clear existing filters
+
+            // 1. Marker Filters (from global categories)
+            Object.keys(categories).forEach(key => {
+                const cat = categories[key];
+                
+                // Determine if checked by default (only 'session' is unchecked)
+                const isChecked = key !== 'session' ? 'checked' : ''; 
+
+                const color = cat.imagePath ? '#facc15' : cat.color;
+                const div = document.createElement('div');
+                div.className = 'flex items-center space-x-2 cursor-pointer hover:bg-slate-800 p-1 rounded';
+                div.innerHTML = `
+                    <input type="checkbox" id="filter-${key}" ${isChecked} class="form-checkbox h-4 w-4 text-amber-500 rounded border-slate-600 bg-slate-700 focus:ring-amber-500 focus:ring-offset-slate-900">
+                    <label for="filter-${key}" class="flex-1 text-sm text-slate-300 cursor-pointer select-none flex items-center">
+                        <span class="w-2 h-2 rounded-full mr-2" style="background-color: ${color}"></span>
+                        ${cat.label}
+                    </label>
+                `;
+                
+                // Toggle Logic
+                div.querySelector('input').addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        if (layerGroups[key]) map.addLayer(layerGroups[key]);
+                    } else {
+                        if (layerGroups[key]) map.removeLayer(layerGroups[key]);
+                    }
+                    renderLocationList(); 
+                });
+                
+                filterContainer.appendChild(div);
+            });
+            
+            // 2. Region Filter (Separate layer)
+            const regionDiv = document.createElement('div');
+            regionDiv.className = 'flex items-center space-x-2 cursor-pointer hover:bg-slate-800 p-1 rounded mt-2 border-t border-slate-700 pt-2';
+            regionDiv.innerHTML = `
+                <!-- REGION CHANGE: Removed 'checked' attribute -->
+                <input type="checkbox" id="filter-regions" class="form-checkbox h-4 w-4 text-indigo-500 rounded border-slate-600 bg-slate-700 focus:ring-indigo-500 focus:ring-offset-slate-900">
+                <label for="filter-regions" class="flex-1 text-sm text-slate-300 cursor-pointer select-none flex items-center">
+                    <span class="w-2 h-2 rounded-full mr-2 bg-indigo-500"></span>
+                    Territorier/Regioner
+                </label>
+            `;
+
+            regionDiv.querySelector('input').addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    if (regionLayerGroup) map.addLayer(regionLayerGroup);
+                } else {
+                    if (regionLayerGroup) map.removeLayer(regionLayerGroup);
+                }
+            });
+            filterContainer.appendChild(regionDiv);
+        }
 
         // Render Location List (Sidebar)
         function renderLocationList(searchTerm = '') {
             const listContainer = document.getElementById('location-list');
             listContainer.innerHTML = '';
-
+            
+            // Collect categories currently checked in the UI
             const activeCategories = Object.keys(categories).filter(key => {
                 const checkbox = document.getElementById(`filter-${key}`);
+                // Check if checkbox exists and is checked
                 return checkbox && checkbox.checked;
             });
 
@@ -309,7 +628,7 @@
             });
 
             if (filteredLocations.length === 0) {
-                listContainer.innerHTML = '<li class="text-slate-500 text-sm italic p-2">No locations found.</li>';
+                listContainer.innerHTML = '<li class="text-slate-500 text-sm italic p-2">Ingen steder funnet.</li>';
                 return;
             }
 
@@ -322,24 +641,19 @@
                 `;
                 
                 li.onclick = () => {
-                    // Fly to location on map
-                    map.flyTo(loc.coords, 2);
-                    loc.markerInstance.openPopup();
+                    // Find the actual marker instance in the global array
+                    const markerData = allMarkers.find(m => m.id === loc.id);
+                    if (markerData && markerData.markerInstance) {
+                        // Fly to the coordinates and zoom in
+                        map.flyTo(markerData.coords, activeMapConfig.maxZoom - 1 > activeMapConfig.initZoom ? activeMapConfig.maxZoom - 1 : activeMapConfig.initZoom + 1);
+                        markerData.markerInstance.openPopup();
+                    }
                     
-                    // On mobile, close sidebar after selection
                     if (window.innerWidth < 768) toggleSidebar();
                 };
                 listContainer.appendChild(li);
             });
         }
-
-        // Search Input Logic
-        document.getElementById('search').addEventListener('input', (e) => {
-            renderLocationList(e.target.value);
-        });
-
-        // Initial Render
-        renderLocationList();
 
         // Sidebar Toggle
         function toggleSidebar() {
@@ -347,10 +661,8 @@
             sidebar.classList.toggle('-translate-x-full');
         }
 
-        // Map Click Debugger (Helpful for finding coordinates!)
-        map.on('click', function(e) {
-            console.log("Map Clicked at: [" + e.latlng.lat.toFixed(0) + ", " + e.latlng.lng.toFixed(0) + "]");
-        });
+        // Initialize the map on load
+        window.onload = loadMapData;
 
     </script>
 </body>
